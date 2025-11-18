@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hpc-pipeline
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hpc-pipeline
+  template:
+    metadata:
+      labels:
+        app: hpc-pipeline
+    spec:
+      restartPolicy: Always
+      containers:
+      - name: hpc-pipeline
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        command: ["python", "orchestrator.py", "--config", "configs/default_config.yaml"]
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+            cpu: 32
+            memory: 256Gi
+        volumeMounts:
+        - mountPath: /mnt/nvme
+          name: nvme
+      volumes:
+      - name: nvme
+        persistentVolumeClaim:
+          claimName: hpc-pipeline-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hpc-pipeline-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Ti
+  storageClassName: local-path
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hpc-pipeline
+spec:         
+  type: {{ .Values.service.type }}
+  ports:
+    - name: prometheus
+      port: 9090
+      targetPort: 9090
+    - name: grafana
+      port: 3000
+      targetPort: 3000
+    - name: alertmanager
+      port: 9093
+      targetPort: 9093
+  selector:
+    app: hpc-pipeline
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hpc-pipeline-config
+data:     
+  default_config.yaml: |
+    replica_count: {{ .Values.replicaCount }}
+    image:
+      repository: {{ .Values.image.repository }}
+      tag: {{ .Values.image.tag }}
+    resources:
+      limits:
+        nvidia.com/gpu: {{ .Values.resources.limits.nvidia.com/gpu }}
+        cpu: {{ .Values.resources.limits.cpu }}
+        memory: {{ .Values.resources.limits.memory }}
+      requests:
+        cpu: {{ .Values.resources.requests.cpu }}
+        memory: {{ .Values.resources.requests.memory }}
+    persistence:
+      enabled: {{ .Values.persistence.enabled }}
+      size: {{ .Values.persistence.size }}
+      storageClass: {{ .Values.persistence.storageClass }}
+    service:
+      type: {{ .Values.service.type }}
+      ports:
+        prometheus: {{ (index .Values.service.ports 0).port }}
+        grafana: {{ (index .Values.service.ports 1).port }}
+        alertmanager: {{ (index .Values.service.ports 2).port }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hpc-pipeline-secret
+type: Opaque
+data:
+  auth_password: {{ .Values.email.auth_password | b64enc | quote }}   

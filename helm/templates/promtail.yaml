@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: promtail
+  labels:
+    app.kubernetes.io/name: promtail
+    app.kubernetes.io/component: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: promtail
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: promtail
+    spec:
+      containers:
+      - name: promtail
+        image: grafana/promtail:2.9.1
+        args:
+          - -config.file=/etc/promtail/promtail.yaml
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 10001
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: 3101
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3101
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        volumeMounts:
+          - name: promtail-config
+            mountPath: /etc/promtail
+          - name: hpc-logs
+            mountPath: /workspace/logs
+      volumes:
+        - name: promtail-config
+          configMap:
+            name: promtail-config
+        - name: hpc-logs
+          hostPath:
+            path: /workspace/logs

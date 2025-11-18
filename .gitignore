@@ -1,0 +1,109 @@
+# -------------------------
+# Python
+# -------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_save
+
+# -------------------------
+# Build / Packaging
+# -------------------------
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+MANIFEST
+
+# Coverage artifacts
+.coverage
+coverage.xml
+
+# -------------------------
+# CUDA / C++ Build
+# -------------------------
+*.o
+*.out
+*.obj
+*.ptx
+*.cubin
+*.fatbin
+*.dSYM/
+*.log
+*.ll
+
+# Torch Extensions
+torch_extensions/
+
+# -------------------------
+# Training Artifacts
+# -------------------------
+checkpoints/
+runs/
+logs/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.npy
+
+# DeepSpeed
+ds_checkpoint/
+zero_stage_3/
+
+# TensorBoard
+events.out.tfevents.*
+
+# -------------------------
+# Data / Cache
+# -------------------------
+nvme/
+local_nvme/
+*.tar
+*.zip
+*.hdf5
+*.parquet
+*.bin
+
+# HuggingFace cache
+.huggingface/
+transformers_cache/
+datasets/
+
+# -------------------------
+# Observability
+# -------------------------
+prometheus/
+grafana/
+loki/
+alertmanager/
+*.db
+
+# -------------------------
+# System / IDE
+# -------------------------
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -------------------------
+# Terraform / Helm
+# -------------------------
+*.tfstate
+*.tfstate.*
+.terraform/
+.helm/

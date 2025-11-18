@@ -1,0 +1,35 @@
+adminUser: admin
+adminPassword: admin123
+
+dashboardsConfigMaps:
+  default: hpc-pipeline-dashboards
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-server.hpc.svc.cluster.local:80
+        isDefault: true
+
+sidecar:
+  dashboards:
+    enabled: true
+    folder: /etc/grafana/provisioning/dashboards
+    searchNamespace: hpc
+    provider:
+      name: 'default'
+      orgId: 1
+      folder: ''
+      folderUid: ''
+      type: file
+      disableDeletion: false
+      allowUiUpdates: true
+    defaultFolderName: 'General'
+  datasources:
+    enabled: true
+    folder: /etc/grafana/provisioning/datasources
+    label: grafana_datasource
+    searchNamespace: hpc

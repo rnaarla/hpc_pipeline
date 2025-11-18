@@ -1,0 +1,30 @@
+replicaCount: 1
+
+image:
+  repository: hpc-pipeline
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    nvidia.com/gpu: 8
+    cpu: 32
+    memory: 256Gi
+  requests:
+    cpu: 16
+    memory: 128Gi
+
+persistence:
+  enabled: true
+  size: 1Ti
+  storageClass: local-path
+
+service:
+  type: ClusterIP
+  ports:
+    - name: prometheus
+      port: 9090
+    - name: grafana
+      port: 3000
+    - name: alertmanager
+      port: 9093  

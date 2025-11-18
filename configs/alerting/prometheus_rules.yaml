@@ -1,0 +1,43 @@
+groups:
+  - name: hpc-pipeline.rules
+    interval: 30s
+    rules:
+      # GPU ECC Error Alerts
+      - alert: HighECCErrorRate
+        expr: gpu_ecc_errors > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High ECC error count on GPU"
+          description: "GPU {{ $labels.gpu }} on rank {{ $labels.rank }} exceeded ECC error threshold."
+
+      # GPU Utilization Too Low (wasted GPUs)
+      - alert: LowGPUUtilization
+        expr: gpu_utilization < 40
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low GPU utilization detected"
+          description: "GPU {{ $labels.gpu }} on rank {{ $labels.rank }} is underutilized."
+
+      # NCCL Communication Imbalance
+      - alert: NCCLImbalance
+        expr: nccl_imbalance > 20
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NCCL communication imbalance detected"
+          description: "Rank {{ $labels.rank }} collective ops show imbalance >20%."
+
+      # Scaling Efficiency Drops
+      - alert: PoorScalingEfficiency
+        expr: scaling_efficiency < 60
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster scaling efficiency dropped below 60%"
+          description: "Observed scaling inefficiency across ranks."

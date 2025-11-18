@@ -1,0 +1,89 @@
+# Default values for hpc-training
+replicaCount: 1
+
+image:
+  repository: hpc-pipeline
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  limits:
+    nvidia.com/gpu: 8
+    memory: 512Gi
+    cpu: 32
+  requests:
+    nvidia.com/gpu: 8
+    memory: 256Gi
+    cpu: 16
+
+nodeSelector:
+  accelerator: nvidia-tesla-a100
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+          - p4d.24xlarge
+          - p3dn.24xlarge
+
+# Distributed training configuration
+distributed:
+  enabled: true
+  worldSize: 8
+  backend: nccl
+
+# Training configuration
+training:
+  configMap: training-config
+  checkpointStorage: s3://hpc-checkpoints/
+  dataPath: s3://hpc-datasets/
+
+# Monitoring
+monitoring:
+  prometheus:
+    enabled: true
+    port: 8000
+  grafana:
+    enabled: true
+
+# Storage
+persistence:
+  enabled: true
+  storageClass: "fast-ssd"
+  accessMode: ReadWriteMany
+  size: 1Ti

@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+    positions:
+      filename: /tmp/positions.yaml
+    clients:
+      - url: http://loki.hpc.svc.cluster.local:3100/loki/api/v1/push
+    scrape_configs:
+      - job_name: hpc-pipeline-logs
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: hpc-pipeline
+              __path__: /workspace/logs/*.out
+  serviceAccountName: promtail
+  serviceAccountAnnotations: {}
+  serviceAccountCreate: true
+  serviceAccountLabels: {}
+  serviceAccountAutomountToken: true
+  serviceAccountImagePullSecrets: []
+  serviceAccountNamespace: hpc

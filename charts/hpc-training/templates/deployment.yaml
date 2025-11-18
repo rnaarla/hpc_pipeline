@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hpc-training.fullname" . }}
+  labels:
+    {{- include "hpc-training.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "hpc-training.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "hpc-training.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "hpc-training.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: prometheus
+              containerPort: {{ .Values.monitoring.prometheus.port }}
+              protocol: TCP
+          env:
+            - name: WORLD_SIZE
+              value: "{{ .Values.distributed.worldSize }}"
+            - name: NCCL_BACKEND
+              value: "{{ .Values.distributed.backend }}"
+            - name: CHECKPOINT_PATH
+              value: "{{ .Values.training.checkpointStorage }}"
+            - name: DATA_PATH
+              value: "{{ .Values.training.dataPath }}"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: training-config
+              mountPath: /config
+            {{- if .Values.persistence.enabled }}
+            - name: data-storage
+              mountPath: /data
+            {{- end }}
+      volumes:
+        - name: training-config
+          configMap:
+            name: {{ .Values.training.configMap }}
+        {{- if .Values.persistence.enabled }}
+        - name: data-storage
+          persistentVolumeClaim:
+            claimName: {{ include "hpc-training.fullname" . }}-data
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,206 @@
+hpc_pipeline:
+  objective: >
+    Production-grade HPC pipeline for models up to 1T parameters.
+    Must meet FAANG/NVIDIA Professional Services standards across
+    engineering correctness, deployment reliability, and post-production operations.
+
+  components:
+    - name: Profiling
+      functional: >
+        Implement PyTorch Profiler with NVTX annotations, multi-rank trace collation.
+      operational: >
+        Prometheus export for step time, memory, FLOPs; profiling overhead ≤2%.
+      outcome: >
+        Per-rank traces viewable in Nsight & Grafana dashboards.
+      acceptance_criteria:
+        - Single-GPU JSON trace produced.
+        - Global trace aggregated across 8 ranks.
+        - Profiling overhead ≤2%.
+
+    - name: Memory Optimization (AMP)
+      functional: >
+        AMP (FP16/BF16) with GradScaler, activation checkpointing,
+        adaptive grad accumulation on OOM, checkpoint save/load.
+      operational: >
+        Must recover from OOM automatically with zero manual intervention.
+      outcome: >
+        Larger models fit, training continues after OOM, checkpoints resume identically.
+      acceptance_criteria:
+        - AMP >1.5× faster than FP32.
+        - OOM triggers grad_accum_steps doubling.
+        - Checkpoint resume yields identical loss curve.
+
+    - name: Custom Kernels
+      functional: >
+        CUDA kernel for matmul+bias+GELU+dropout using shared memory tiling + Tensor Cores.
+      operational: >
+        ≥70% of theoretical roofline FLOPs achieved.
+      outcome: >
+        >1.5× faster than unfused baseline, numerically stable.
+      acceptance_criteria:
+        - Kernel matches PyTorch within 1e-3.
+        - >1.5× speedup for 2048×2048 GEMM on A100/H100.
+        - Arithmetic intensity reported.
+
+    - name: Distributed Training (DDP)
+      functional: >
+        AMP-enabled DDP trainer with gradient bucketing + async all-reduce.
+      operational: >
+        Elastic fault tolerance (TorchElastic/SLURM), Prometheus metrics.
+      outcome: >
+        Linear scaling with ≥80% efficiency up to 64 GPUs.
+      acceptance_criteria:
+        - 2-rank CPU sync validated.
+        - 8-rank GPU scaling efficiency ≥80%.
+        - Recovers after rank restart.
+
+    - name: Distributed Training (DeepSpeed)
+      functional: >
+        ZeRO-3 with CPU/NVMe offload, activation partitioning, sharded checkpoints.
+      operational: >
+        Wall-clock breakdown telemetry via Prometheus.
+      outcome: >
+        10B+ param models fit on commodity GPUs, checkpoints stitched & resumable.
+      acceptance_criteria:
+        - ZeRO-3 runs synthetic 10B model w/o OOM.
+        - Sharded checkpoint stitched globally.
+        - Forward/backward/optimizer times exported.
+
+    - name: Data Pipeline
+      functional: >
+        Multi-tier cache (Remote → NVMe → DRAM → HBM), GPUDirect Storage,
+        async prefetch, shuffle buffer.
+      operational: >
+        Zero GPU idle time; metrics for IO throughput, cache hits.
+      outcome: >
+        Petabyte-scale streaming without GPU starvation.
+      acceptance_criteria:
+        - Cache hits logged correctly.
+        - 1000+ shards streamed successfully.
+        - IO throughput ≥ link bandwidth.
+
+    - name: Fault Tolerance
+      functional: >
+        Sharded checkpointing with hash validation and global stitcher.
+      operational: >
+        SLURM/K8s requeue support, recovery ≤2× checkpoint time.
+      outcome: >
+        Jobs resume automatically after failure.
+      acceptance_criteria:
+        - Hash mismatch triggers corruption alert.
+        - Recovery works with missing shards.
+        - SLURM requeue resumes last checkpoint.
+
+    - name: Observability
+      functional: >
+        GPU telemetry (DCGM), NCCL imbalance parser,
+        training metrics (loss, throughput, grad norm).
+      operational: >
+        Prometheus + Loki + OpenTelemetry integration.
+      outcome: >
+        Full-stack observability of system + training.
+      acceptance_criteria:
+        - ECC error threshold triggers alert.
+        - NCCL imbalance >20% detected.
+        - OpenTelemetry traces cover train → comm → checkpoint.
+
+    - name: Benchmarking
+      functional: >
+        GEMM roofline analysis, throughput scaling, Kaplan scaling law fitting.
+      operational: >
+        Auto-generate plots + Prometheus metrics.
+      outcome: >
+        Bottlenecks identified, scaling laws predicted.
+      acceptance_criteria:
+        - Roofline AI reported correctly.
+        - 4-GPU efficiency ≥75%.
+        - Kaplan loss predictions within ±10%.
+
+    - name: Orchestrator
+      functional: >
+        Config-driven CLI orchestrating profiler → training → data → recovery → observability → benchmarking.
+      operational: >
+        Supports SLURM/K8s; logs metadata for lineage.
+      outcome: >
+        One command launches reproducible job.
+      acceptance_criteria:
+        - Dummy config runs end-to-end.
+        - Metadata JSON includes job ID + timestamps.
+        - Supports SLURM requeue + K8s restart.
+
+    - name: Chaos Monkey
+      functional: >
+        Random rank kill, slowdown injection, GPU OOM simulation.
+      operational: >
+        Events logged to Prometheus + Loki with CHAOS tag.
+      outcome: >
+        Pipeline validated under chaos scenarios.
+      acceptance_criteria:
+        - Chaos events logged.
+        - Recovery stitches checkpoint after chaos.
+        - Chaos overlay aligns with metrics.
+
+    - name: Infrastructure
+      functional: >
+        Helm charts (training, Prometheus, Grafana, Alertmanager, Loki), Terraform modules.
+      operational: >
+        One-command provisioning; lint/validate must pass.
+      outcome: >
+        Full stack deployable reproducibly on HPC or cloud.
+      acceptance_criteria:
+        - `helm lint` passes.
+        - `terraform validate` passes.
+        - Grafana dashboards auto-provisioned.
+
+    - name: CI/CD
+      functional: >
+        GitHub Actions for lint, tests, helm lint, terraform validate, Docker build.
+      operational: >
+        GPU-only tests skipped gracefully, merges blocked on failure.
+      outcome: >
+        Continuous validation across code and infra.
+      acceptance_criteria:
+        - CI pipeline executes end-to-end.
+        - GPU integration tests run on self-hosted runner.
+        - Merge blocked on failure.
+
+    - name: Tests
+      functional: >
+        Unit, integration, stress (16 ranks), chaos tests.
+      operational: >
+        ≥85% coverage, CI reproducible.
+      outcome: >
+        All acceptance criteria validated in CI.
+      acceptance_criteria:
+        - Unit tests per module.
+        - Orchestrator passes 2-rank run.
+        - Chaos/stress tests succeed.
+
+    - name: Documentation
+      functional: >
+        README (arch, deploy, observability, chaos, testing),
+        CONTRIBUTING (standards), LICENSE (Apache 2.0).
+      operational: >
+        Docs validated in CI.
+      outcome: >
+        Engineers onboard in <30m.
+      acceptance_criteria:
+        - README includes deploy guide.
+        - CONTRIBUTING includes coding/metrics conventions.
+        - LICENSE is Apache 2.0.
+
+  cross_cutting:
+    - performance_predictability: >
+        Roofline efficiency thresholds enforced; tokens/sec regression >5% fails CI.
+    - security_compliance: >
+        CI must scan for CVEs, fail on high/critical.
+    - elastic_scaling: >
+        Jobs scale up/down elastically across heterogeneous GPUs.
+    - slos: >
+        Training availability ≥99.5%, checkpoint MTTR ≤5m.
+    - cost_efficiency: >
+        Track $/M tokens, alert on 20% deviation.
+    - post_mortem: >
+        Auto-generate incident report bundle (logs, metrics, traces).
+    - developer_experience: >
+        `make dev` runs local CPU/2-GPU cluster; onboarding <30m.

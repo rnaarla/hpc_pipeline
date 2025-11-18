@@ -1,0 +1,24 @@
+name: Phase 4 Validation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    paths:
+      - 'optimization/**'
+      - 'tests/**'
+
+jobs:
+  validate-phase4:
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build custom kernels
+        run: python setup.py build_ext --inplace
+
+      - name: Validate kernel performance (CLI)
+        run: python -m optimization.kernel_benchmark --size 2048 --validate-requirements
+
+      - name: Run tests
+        run: pytest -v tests/test_custom_kernels.py tests/verify_production_readiness.py

@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hpc-pipeline
+spec:
+  completions: 1
+  parallelism: 1
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: hpc-pipeline
+        image: hpc-pipeline:latest
+        command: ["python", "orchestrator.py", "--config", "configs/default_config.yaml"]
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+        volumeMounts:
+        - mountPath: /mnt/nvme
+          name: local-nvme
+      volumes:
+      - name: local-nvme
+        hostPath:
+          path: /local_nvme
+          type: Directory
+      nodeSelector:
+        kubernetes.io/hostname: hpc-node-1
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: "kubernetes.io/hostname"
+                operator: In
+                values:
+                - hpc-node-1  
