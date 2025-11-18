@@ -11,10 +11,10 @@ import json
 import asyncio
 import logging
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Iterator, Tuple
 from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor
 import torch
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 import numpy as np
@@ -51,21 +51,19 @@ class MemoryTier:
         self.name = name
         self.capacity_bytes = math.inf if math.isinf(capacity_gb) else int(capacity_gb * 1024**3)
         self.rank = rank
-        self.cache = {}
-        self.lru_order = []
+        self.cache: OrderedDict[str, torch.Tensor] = OrderedDict()
         self.stats = CacheStats()
         self._lock = threading.RLock()
     
     def get(self, key: str) -> Optional[torch.Tensor]:
         """Get data from cache."""
         with self._lock:
-            if key in self.cache:
-                # Update LRU order
-                self.lru_order.remove(key)
-                self.lru_order.append(key)
+            tensor = self.cache.get(key)
+            if tensor is not None:
+                self.cache.move_to_end(key)
                 self.stats.hits += 1
                 cache_hit_ratio.labels(tier=self.name, rank=self.rank).set(self.stats.hit_ratio)
-                return self.cache[key].clone()
+                return tensor
             else:
                 self.stats.misses += 1
                 cache_hit_ratio.labels(tier=self.name, rank=self.rank).set(self.stats.hit_ratio)
@@ -74,21 +72,28 @@ class MemoryTier:
     def put(self, key: str, data: torch.Tensor) -> bool:
         """Put data in cache with LRU eviction."""
         with self._lock:
-            data_size = data.numel() * data.element_size()
+            if data is None:
+                return False
+            
+            data_view = data.detach()
+            data_size = data_view.numel() * data_view.element_size()
+            
+            # Remove existing entry before size accounting
+            if key in self.cache:
+                existing = self.cache.pop(key)
+                self.stats.total_size_bytes -= existing.numel() * existing.element_size()
             
             # Check if we need to evict
             while (self.stats.total_size_bytes + data_size > self.capacity_bytes and 
-                   len(self.cache) > 0):
-                oldest_key = self.lru_order.pop(0)
-                if oldest_key in self.cache:
-                    old_data = self.cache.pop(oldest_key)
-                    self.stats.total_size_bytes -= old_data.numel() * old_data.element_size()
-                    self.stats.evictions += 1
+                   len(self.cache) > 0 and not math.isinf(self.capacity_bytes)):
+                oldest_key, old_data = self.cache.popitem(last=False)
+                self.stats.total_size_bytes -= old_data.numel() * old_data.element_size()
+                self.stats.evictions += 1
             
             # Add new data if it fits
-            if data_size <= self.capacity_bytes:
-                self.cache[key] = data.clone()
-                self.lru_order.append(key)
+            if data_size <= self.capacity_bytes or math.isinf(self.capacity_bytes):
+                self.cache[key] = data_view
+                self.cache.move_to_end(key)
                 self.stats.total_size_bytes += data_size
                 cache_size_gb.labels(tier=self.name, rank=self.rank).set(
                     self.stats.total_size_bytes / (1024**3)
@@ -101,7 +106,6 @@ class MemoryTier:
         """Clear cache."""
         with self._lock:
             self.cache.clear()
-            self.lru_order.clear()
             self.stats = CacheStats()
 
 class RemoteTier(MemoryTier):
@@ -198,30 +202,42 @@ class AsyncPrefetcher:
     def __init__(self, max_queue_size: int = 16, num_workers: int = 4):
         self.max_queue_size = max_queue_size
         self.queue = asyncio.Queue(maxsize=max_queue_size)
-        self.executor = ThreadPoolExecutor(max_workers=num_workers)
+        self.key_queue: Optional[asyncio.Queue] = None
+        self.num_workers = max(1, num_workers)
         self.is_running = False
         self.prefetch_tasks = []
     
     async def start_prefetching(self, data_keys: List[str], pipeline: 'MultiTierDataPipeline'):
         """Start prefetching data."""
         self.is_running = True
+        # Initialise key queue each run to avoid stale state
+        self.key_queue = asyncio.Queue()
+        for key in data_keys:
+            await self.key_queue.put(key)
         
         async def prefetch_worker():
-            for key in data_keys:
-                if not self.is_running:
+            while self.is_running:
+                try:
+                    key = await asyncio.wait_for(self.key_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                except asyncio.CancelledError:
                     break
                 
                 try:
-                    # Prefetch data asynchronously
                     data = await pipeline.load_data_async(key)
                     if data is not None:
+                        pipeline.put_data(key, data)
                         await self.queue.put((key, data))
                         prefetch_queue_size.labels(rank=pipeline.rank).set(self.queue.qsize())
                 except Exception as e:
                     logger.error(f"Prefetch error for {key}: {e}")
+                finally:
+                    if self.key_queue is not None:
+                        self.key_queue.task_done()
         
         # Start prefetch tasks
-        for _ in range(min(4, len(data_keys))):
+        for _ in range(min(self.num_workers, len(data_keys))):
             task = asyncio.create_task(prefetch_worker())
             self.prefetch_tasks.append(task)
     
@@ -237,6 +253,15 @@ class AsyncPrefetcher:
         self.is_running = False
         for task in self.prefetch_tasks:
             task.cancel()
+        self.prefetch_tasks.clear()
+        if self.key_queue is not None:
+            try:
+                while True:
+                    self.key_queue.get_nowait()
+                    self.key_queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+            self.key_queue = None
 
 class MultiTierDataPipeline:
     """Multi-tier data pipeline with caching hierarchy."""
@@ -321,7 +346,10 @@ class MultiTierDataPipeline:
                 return data
         
         # Load from remote asynchronously
-        return await self.remote.load_async(key)
+        data = await self.remote.load_async(key)
+        if data is not None:
+            self.put_data(key, data)
+        return data
     
     def put_data(self, key: str, data: torch.Tensor):
         """Store data in appropriate tier."""

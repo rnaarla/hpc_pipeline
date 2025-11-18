@@ -10,6 +10,7 @@ import json
 import logging
 import argparse
 import hashlib
+import psutil
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 import torch
@@ -17,6 +18,7 @@ import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.checkpoint import checkpoint as activation_checkpoint
 from prometheus_client import Gauge, Counter, start_http_server
 
 # -----------------------------------------------------------------------------
@@ -46,9 +48,15 @@ checkpoint_save_time = Gauge("checkpoint_save_seconds", "Checkpoint save duratio
 # -----------------------------------------------------------------------------
 def report_memory(rank):
     """Reports memory across tiers: GPU + CPU."""
-    gpu_bytes = torch.cuda.memory_allocated()
-    cpu_bytes = torch.cuda.memory_reserved() if hasattr(torch, "memory_reserved") else -1
-    gpu_mem_used.labels(rank=rank).set(gpu_bytes)
+    gpu_bytes = 0
+    if torch.cuda.is_available():
+        gpu_bytes = torch.cuda.memory_allocated()
+        gpu_mem_used.labels(rank=rank).set(gpu_bytes)
+    else:
+        gpu_mem_used.labels(rank=rank).set(0)
+
+    process = psutil.Process(os.getpid())
+    cpu_bytes = process.memory_info().rss
     cpu_mem_used.labels(rank=rank).set(cpu_bytes)
     return gpu_bytes, cpu_bytes
 
@@ -109,8 +117,13 @@ class AMPTrainer:
             # For transformer layers
             if hasattr(module, 'forward'):
                 original_forward = module.forward
+                if getattr(original_forward, "__is_activation_checkpointed__", False):
+                    return
+
                 def checkpointed_forward(*args, **kwargs):
-                    return torch.utils.checkpoint.checkpoint(original_forward, *args, **kwargs)
+                    return activation_checkpoint(original_forward, *args, **kwargs)
+
+                checkpointed_forward.__is_activation_checkpointed__ = True
                 module.forward = checkpointed_forward
         
         self.model.apply(checkpoint_wrapper)
@@ -288,26 +301,32 @@ class AMPTrainer:
         torch.cuda.synchronize()
         start_time = time.time()
         for _ in range(num_iterations):
+            self.optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=False):
                 outputs = self.model(test_batch)
                 loss = nn.functional.cross_entropy(outputs, test_targets)
-                loss.backward()
+            loss.backward()
         torch.cuda.synchronize()
         fp32_time = time.time() - start_time
         
         # Clear gradients
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
         
         # AMP benchmark
         torch.cuda.synchronize()
         start_time = time.time()
         for _ in range(num_iterations):
+            self.optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=True):
                 outputs = self.model(test_batch)
                 loss = nn.functional.cross_entropy(outputs, test_targets)
             self.scaler.scale(loss).backward()
+            # No step/update to avoid mutating model parameters during benchmark
         torch.cuda.synchronize()
         amp_time = time.time() - start_time
+        
+        # Reset gradients post benchmark
+        self.optimizer.zero_grad(set_to_none=True)
         
         speedup_ratio = fp32_time / amp_time
         amp_speedup_ratio.labels(rank=self.rank).set(speedup_ratio)

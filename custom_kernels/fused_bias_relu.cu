@@ -90,7 +90,8 @@ extern "C" {
         int batch_size,
         int channels,
         int height,
-        int width
+        int width,
+        cudaStream_t stream = nullptr
     ) {
         // Input validation
         if (!validate_inputs(batch_size, channels, height, width)) {
@@ -113,11 +114,13 @@ extern "C" {
                              (reinterpret_cast<uintptr_t>(d_input) % 16 == 0) &&
                              (reinterpret_cast<uintptr_t>(d_output) % 16 == 0);
         
+        cudaStream_t launch_stream = stream ? stream : 0;
+
         if (use_vectorized && total_elements >= 1024) {
             long long vec_elements = total_elements / 4;
             long long grid_size = (vec_elements + block_size - 1) / block_size;
             
-            fused_bias_relu_kernel_vectorized<<<grid_size, block_size>>>(
+            fused_bias_relu_kernel_vectorized<<<grid_size, block_size, 0, launch_stream>>>(
                 reinterpret_cast<const float4*>(d_input),
                 d_bias,
                 reinterpret_cast<float4*>(d_output),
@@ -126,15 +129,14 @@ extern "C" {
         } else {
             long long grid_size = (total_elements + block_size - 1) / block_size;
             
-            fused_bias_relu_kernel_optimized<<<grid_size, block_size>>>(
+            fused_bias_relu_kernel_optimized<<<grid_size, block_size, 0, launch_stream>>>(
                 d_input, d_bias, d_output,
                 batch_size, channels, spatial_size, total_elements
             );
         }
         
         // Check for kernel launch errors
-        CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(cudaPeekAtLastError());
     }
 }
 
@@ -178,7 +180,7 @@ void fused_bias_relu_host(
     CUDA_CHECK(cudaMemcpyAsync(d_bias, h_bias, bias_bytes, cudaMemcpyHostToDevice, stream));
     
     // Launch kernel
-    fused_bias_relu(d_input, d_bias, d_output, batch_size, channels, height, width);
+    fused_bias_relu(d_input, d_bias, d_output, batch_size, channels, height, width, stream);
     
     // Copy result back to host
     CUDA_CHECK(cudaMemcpyAsync(h_output, d_output, input_bytes, cudaMemcpyDeviceToHost, stream));

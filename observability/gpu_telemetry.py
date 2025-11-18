@@ -72,6 +72,7 @@ class DCGMCollector:
         # ECC error tracking
         self.previous_ecc_counts = {}
         self.ecc_error_history = {}
+        self.last_exported_ecc_counts: Dict[int, Dict[str, int]] = {}
         
         # Collection thread
         self.is_collecting = False
@@ -263,7 +264,12 @@ class DCGMCollector:
         
         # ECC errors
         for error_type, count in stats.ecc_errors.items():
-            ecc_errors_total.labels(rank=self.rank, device=device_label, error_type=error_type).inc(count)
+            previous = self.last_exported_ecc_counts.get(stats.device_id, {})
+            prev_count = previous.get(error_type, 0)
+            delta = count - prev_count
+            if delta > 0:
+                ecc_errors_total.labels(rank=self.rank, device=device_label, error_type=error_type).inc(delta)
+        self.last_exported_ecc_counts[stats.device_id] = stats.ecc_errors.copy()
         
         # PCIe throughput
         gpu_pcie_throughput_gbps.labels(rank=self.rank, device=device_label, direction="rx").set(stats.pcie_throughput_rx_gbps)

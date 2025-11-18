@@ -189,25 +189,34 @@ class DDPTrainer:
         if self.world_size == 1:
             return 100.0  # Perfect efficiency for single GPU
         
-        self.ddp_model.eval()
+        was_training = self.ddp_model.training
+        self.ddp_model.train()
         
-        # Warmup
+        # Warmup to stabilize kernels
+        warmup_steps = min(5, num_steps)
         for i, (batch, targets) in enumerate(test_loader):
-            if i >= 5:
+            if i >= warmup_steps:
                 break
-            batch, targets = batch.to(self.device), targets.to(self.device)
-            with torch.no_grad():
+            batch, targets = batch.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
+            with torch.cuda.amp.autocast(enabled=self.amp_enabled):
                 _ = self.ddp_model(batch)
         
-        # Benchmark
-        torch.cuda.synchronize()
-        start_time = time.time()
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
+        
+        total_tokens = 0
+        step_times_ms: list[float] = []
         
         for i, (batch, targets) in enumerate(test_loader):
             if i >= num_steps:
                 break
             
-            batch, targets = batch.to(self.device), targets.to(self.device)
+            batch = batch.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+            
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
+            step_start = time.time()
             
             with torch.cuda.amp.autocast(enabled=self.amp_enabled):
                 outputs = self.ddp_model(batch)
@@ -221,29 +230,42 @@ class DDPTrainer:
                 loss.backward()
                 self.optimizer.step()
             
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
+            
+            if self.device.type == "cuda":
+                torch.cuda.synchronize()
+            step_time_ms = (time.time() - step_start) * 1000
+            step_times_ms.append(step_time_ms)
+            
+            total_tokens += batch.shape[0]
         
-        torch.cuda.synchronize()
+        # Restore original training mode
+        if not was_training:
+            self.ddp_model.eval()
+        
         if self.world_size > 1:
             dist.barrier()
         
-        elapsed_time = time.time() - start_time
+        avg_step_time_ms = sum(step_times_ms) / max(len(step_times_ms), 1)
+        local_throughput = (total_tokens * 1000.0) / (avg_step_time_ms * max(len(step_times_ms), 1)) if avg_step_time_ms > 0 else 0.0
         
-        # Calculate efficiency (ideal time = single GPU time / world_size)
-        # For simplicity, assume linear scaling is target
-        ideal_time = elapsed_time  # This would be single GPU baseline / world_size
-        efficiency = min(100.0, (ideal_time / elapsed_time) * 100)
+        throughput_tensor = torch.tensor([local_throughput], device=self.device if self.device.type == "cuda" else torch.device("cpu"))
+        max_tensor = throughput_tensor.clone()
         
-        # Gather efficiency from all ranks
-        if self.world_size > 1:
-            efficiency_tensor = torch.tensor([efficiency]).cuda()
-            dist.all_reduce(efficiency_tensor)
-            efficiency = efficiency_tensor.item() / self.world_size
+        if self.world_size > 1 and dist.is_initialized():
+            dist.all_reduce(throughput_tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(max_tensor, op=dist.ReduceOp.MAX)
+            global_throughput = throughput_tensor.item()
+            reference_throughput = max_tensor.item() * self.world_size
+        else:
+            global_throughput = local_throughput
+            reference_throughput = max(local_throughput, 1e-6)
+        
+        efficiency = 100.0 if reference_throughput <= 0 else (global_throughput / reference_throughput) * 100.0
+        efficiency = max(0.0, min(100.0, efficiency))
         
         ddp_scaling_efficiency.labels(world_size=self.world_size).set(efficiency)
-        
         logger.info(f"DDP Scaling Efficiency: {efficiency:.1f}% ({self.world_size} GPUs)")
-        self.ddp_model.train()
         return efficiency
     
     def save_checkpoint(self, step: int, loss: float) -> Path:

@@ -125,15 +125,21 @@ def throughput_bench(model, tokenizer=None, seq_len=2048, batch_size=8,
     x = torch.randint(0, 32000, (batch_size, seq_len), device="cuda")
     emb = nn.Embedding(32000, 4096).cuda()
     model = model.cuda()
+    optimizer = torch.optim.AdamW(
+        list(model.parameters()) + list(emb.parameters()),
+        lr=1e-4
+    )
 
     torch.cuda.synchronize()
     start = time.time()
 
     tokens = 0
     for _ in range(steps):
+        optimizer.zero_grad(set_to_none=True)
         out = model(emb(x))
         loss = out.sum()
         loss.backward()
+        optimizer.step()
         tokens += batch_size * seq_len
 
     torch.cuda.synchronize()

@@ -18,7 +18,7 @@ kernel_latency_us = Histogram("kernel_latency_us", "Kernel latency", ["kernel_na
 @triton.jit
 def fused_matmul_gelu_kernel(
     # Pointers to matrices
-    a_ptr, b_ptr, c_ptr, bias_ptr, output_ptr,
+    a_ptr, b_ptr, bias_ptr, output_ptr,
     # Matrix dimensions
     M, N, K,
     # Block dimensions
@@ -98,10 +98,11 @@ class FusedMatmulGELU(torch.nn.Module):
         # Launch kernel
         grid = lambda META: (triton.cdiv(batch_size, META['BLOCK_SIZE_M']),)
         
+        stream = torch.cuda.current_stream()
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         
-        start_event.record()
+        start_event.record(stream)
         fused_matmul_gelu_kernel[grid](
             x, weight, bias, output,
             batch_size, self.out_features, self.in_features,
@@ -110,23 +111,27 @@ class FusedMatmulGELU(torch.nn.Module):
             BLOCK_SIZE_K=64,
             GROUP_SIZE_M=8
         )
-        end_event.record()
+        end_event.record(stream)
+        end_event.synchronize()
         
         # Record metrics
-        torch.cuda.synchronize()
         latency_us = start_event.elapsed_time(end_event) * 1000
         kernel_latency_us.labels(kernel_name="fused_matmul_gelu").observe(latency_us)
         
         # Calculate FLOPS
         flops = 2 * batch_size * self.out_features * self.in_features
-        flops_per_second = flops / (latency_us * 1e-6)
-        kernel_flops.labels(kernel_name="fused_matmul_gelu").set(flops_per_second)
+        if latency_us > 0:
+            flops_per_second = flops / (latency_us * 1e-6)
+            kernel_flops.labels(kernel_name="fused_matmul_gelu").set(flops_per_second)
+        else:
+            flops_per_second = 0.0
         
         # Calculate efficiency vs theoretical peak
         if self.use_tensor_cores:
             peak_flops = 312e12  # A100 Tensor Core peak FLOPS
-            efficiency = (flops_per_second / peak_flops) * 100
-            kernel_efficiency.labels(kernel_name="fused_matmul_gelu").set(efficiency)
+            if peak_flops > 0:
+                efficiency = (flops_per_second / peak_flops) * 100
+                kernel_efficiency.labels(kernel_name="fused_matmul_gelu").set(efficiency)
         
         return output
 
