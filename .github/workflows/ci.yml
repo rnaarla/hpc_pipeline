@@ -106,8 +106,7 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
-          # Skip GPU tests in CI for now, focus on unit tests
-          pytest tests/unit/ --cov=hpc_pipeline --cov-report=xml --cov-report=term-missing --cov-fail-under=80 || echo "Tests need implementation"
+          pytest -m "not gpu" tests/unit/ --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=80
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
@@ -118,16 +117,34 @@ jobs:
           name: codecov-umbrella
 
   gpu-tests:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gpu]
     if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[gpu-test]')
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
-      - name: Skip GPU tests (no self-hosted runner)
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
         run: |
-          echo "⚠️ GPU tests skipped - requires self-hosted runner with GPU"
-          echo "To enable: Add self-hosted runner with GPU and update workflow"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Validate CUDA visibility
+        run: |
+          nvidia-smi
+          python - <<'PY'
+          import torch
+          assert torch.cuda.is_available(), "CUDA devices are not visible to this runner."
+          print("CUDA devices:", torch.cuda.device_count())
+          PY
+
+      - name: Run GPU test suite
+        run: ./scripts/run_test_suite.sh
 
   docker-build:
     runs-on: ubuntu-latest

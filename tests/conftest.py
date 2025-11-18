@@ -21,11 +21,12 @@ def pytest_configure(config):
         torch.cuda.manual_seed_all(42)
 
 def pytest_collection_modifyitems(config, items):
-    """Ensure GPU-marked tests degrade gracefully when CUDA is unavailable."""
+    """Skip GPU-marked tests when CUDA is unavailable."""
     if not torch.cuda.is_available():
+        skip_gpu = pytest.mark.skip(reason="CUDA not available")
         for item in items:
             if "gpu" in item.keywords:
-                item.user_properties.append(("requires_cuda", False))
+                item.add_marker(skip_gpu)
 
 @pytest.fixture(scope="session")
 def cuda_available():

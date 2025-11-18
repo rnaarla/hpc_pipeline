@@ -65,8 +65,13 @@ class TestAMPTraining:
             assert rank == 1
             assert world_size == 4
     
+    @pytest.mark.gpu
     def test_amp_training_basic(self):
         """Test basic AMP training components."""
+        pytest.importorskip("torch.cuda")
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available for AMP training test")
+
         model = SimpleModel()
         scaler = torch.cuda.amp.GradScaler()
         optimizer = torch.optim.Adam(model.parameters())

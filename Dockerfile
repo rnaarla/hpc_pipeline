@@ -23,13 +23,29 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     libnuma1 \
     numactl \
+    software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
 RUN useradd -m -u 1000 -s /bin/bash hpc && \
     usermod -aG sudo hpc
-USER hpc
+USER root
 WORKDIR /home/hpc
+
+# Install Helm, Terraform, and Trivy for CI validation
+RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && \
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg arch=$(dpkg --print-architecture)] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+      > /etc/apt/sources.list.d/hashicorp.list && \
+    apt-get update && apt-get install -y terraform && \
+    curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+      gpg --dearmor | tee /usr/share/keyrings/trivy.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -cs) main" | \
+      tee /etc/apt/sources.list.d/trivy.list && \
+    apt-get update && apt-get install -y trivy && \
+    rm -rf /var/lib/apt/lists/*
+
+USER hpc
 
 # Development stage
 FROM base AS development
