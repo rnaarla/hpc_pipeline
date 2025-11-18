@@ -9,7 +9,7 @@ Production-grade HPC pipeline for training models up to 1T parameters with FAANG
 
 The HPC pipeline consists of modular components designed for scalability and fault tolerance:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Orchestrator                            │
 │  Config-driven CLI for end-to-end pipeline management      │
@@ -55,8 +55,13 @@ git clone https://github.com/rnaarla8/hpc-pipeline.git
 cd hpc-pipeline
 
 # Setup development environment
-make dev
+make install
+
+# Optional: spawn a shell with the virtualenv pre-activated
+make devshell
 ```
+
+> ℹ️ All `make` targets bootstrap the `.venv/` directory on demand and reuse it on subsequent runs—no manual `source` or repeated `pip install` cycles required.
 
 ### 2. Run Basic Training
 
@@ -120,6 +125,7 @@ kubectl apply -f k8s/
 ### Metrics Dashboard
 
 Access real-time training metrics:
+
 - **GPU Utilization**: DCGM telemetry with ECC error monitoring
 - **Training Progress**: Loss curves, throughput (tokens/sec), gradient norms  
 - **Communication**: NCCL imbalance detection (>20% triggers alerts)
@@ -128,7 +134,8 @@ Access real-time training metrics:
 ### Distributed Tracing
 
 OpenTelemetry traces cover the complete pipeline:
-```
+
+```text
 Training Step → Data Loading → Forward Pass → Backward Pass → 
 All-Reduce → Checkpoint Save → Metrics Export
 ```
@@ -136,6 +143,7 @@ All-Reduce → Checkpoint Save → Metrics Export
 ### Log Aggregation
 
 Structured logs with Loki integration:
+
 ```bash
 # Query training logs
 kubectl logs -l app=hpc-training | grep "ERROR\|WARN"
@@ -164,15 +172,17 @@ All chaos events are logged to Prometheus with `CHAOS` tags for correlation with
 ## 🧪 Testing
 
 ### Unit Tests
+
 ```bash
 # Run all unit tests
-pytest tests/ -v
+make test
 
 # Run with coverage
-pytest tests/ --cov=. --cov-report=html
+make coverage
 ```
 
 ### Integration Tests
+
 ```bash
 # 2-rank distributed test
 make test-distributed
@@ -182,6 +192,7 @@ make test-stress
 ```
 
 ### Performance Validation
+
 ```bash
 # Roofline analysis
 python -m benchmarking.roofline_analysis --model_size=1B
@@ -198,11 +209,12 @@ python -m benchmarking.scaling_test --min_gpus=1 --max_gpus=8
 | 7B params  | 8    | 12,000                 | 82%            | 22GB/GPU     |
 | 70B params | 32   | 8,500                  | 85%            | 78GB/GPU     |
 
-*Benchmarks on A100 80GB with NVLink interconnect*
+Benchmarks on A100 80GB with NVLink interconnect.
 
 ## 🔧 Configuration
 
 ### Training Configuration
+
 ```yaml
 # configs/training.yaml
 model:
@@ -225,6 +237,7 @@ monitoring:
 ```
 
 ### Infrastructure Configuration
+
 ```yaml
 # configs/infrastructure.yaml
 cluster:
@@ -245,18 +258,21 @@ networking:
 ### Common Issues
 
 **OOM Errors**: Pipeline automatically doubles gradient accumulation steps
+
 ```bash
 # Check OOM recovery logs
 kubectl logs hpc-training | grep "OOM_RECOVERY"
 ```
 
 **NCCL Hangs**: Monitor communication imbalance
+
 ```bash
 # View NCCL metrics in Grafana
 open http://localhost:3000/d/nccl-dashboard
 ```
 
 **Checkpoint Corruption**: Hash validation triggers automatic alerts
+
 ```bash
 # Check checkpoint integrity
 python -m fault_tolerance.checkpoint_validator --path=/checkpoints/step_1000
