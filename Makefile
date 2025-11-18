@@ -19,6 +19,15 @@ install:
 	python3.11 -m pip install -r requirements-dev.txt
 	python3.11 setup.py build_ext --inplace
 
+validate:
+	python3.11 -m black --check .
+	python3.11 -m isort --check-only .
+	python3.11 -m flake8 .
+	python3.11 -m mypy --ignore-missing-imports .
+	if command -v terraform >/dev/null 2>&1; then terraform fmt -check -recursive; else echo "terraform not installed, skipping fmt check"; fi
+	if command -v helm >/dev/null 2>&1; then helm lint infra/helm/hpc-pipeline --strict; else echo "helm not installed, skipping chart lint"; fi
+	python3.11 -m pytest tests/unit -m "not gpu"
+
 # Code quality
 lint:
 	python3.11 -m flake8 optimization distributed monitoring --max-line-length=100

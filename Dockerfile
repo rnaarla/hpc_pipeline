@@ -2,17 +2,16 @@
 ARG CUDA_VERSION=12.1
 ARG PYTORCH_VERSION=2.1.0
 
-# Base CUDA runtime image
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04 AS base
 
-# Install system dependencies
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Core dependencies
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
-    git \
-    wget \
+    software-properties-common \
     curl \
+    wget \
+    git \
     build-essential \
     cmake \
     ninja-build \
@@ -23,31 +22,21 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     libnuma1 \
     numactl \
-    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN useradd -m -u 1000 -s /bin/bash hpc && \
-    usermod -aG sudo hpc
-USER root
+# Non-root user
+RUN useradd -m -u 1000 -s /bin/bash hpc
+USER hpc
 WORKDIR /home/hpc
 
-# Install Helm, Terraform, and Trivy for CI validation
-RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && \
-    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg arch=$(dpkg --print-architecture)] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-      > /etc/apt/sources.list.d/hashicorp.list && \
-    apt-get update && apt-get install -y terraform && \
-    curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | \
-      gpg --dearmor | tee /usr/share/keyrings/trivy.gpg > /dev/null && \
-    echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -cs) main" | \
-      tee /etc/apt/sources.list.d/trivy.list && \
-    apt-get update && apt-get install -y trivy && \
-    rm -rf /var/lib/apt/lists/*
-
-USER hpc
-
+# ---------------------
 # Development stage
+# ---------------------
 FROM base AS development
 
 USER root
@@ -58,63 +47,66 @@ RUN apt-get update && apt-get install -y \
     gdb \
     valgrind \
     && rm -rf /var/lib/apt/lists/*
-
 USER hpc
 
-# Install Python dependencies for development
 COPY requirements-dev.txt .
-RUN python3.11 -m pip install --user -r requirements-dev.txt
+RUN python3.11 -m pip install --user --upgrade pip && \
+    python3.11 -m pip install --user -r requirements-dev.txt
 
+# ---------------------
 # Production stage
+# ---------------------
 FROM base AS production
 
 USER hpc
-
-# Copy requirements and install production dependencies
 COPY requirements.txt .
-RUN python3.11 -m pip install --user --no-cache-dir -r requirements.txt
+RUN python3.11 -m pip install --user --upgrade pip && \
+    python3.11 -m pip install --user --no-cache-dir -r requirements.txt && \
+    python3.11 -m pip install --user --no-cache-dir \
+        torch==${PYTORCH_VERSION} \
+        torchvision \
+        torchaudio \
+        --index-url https://download.pytorch.org/whl/cu121
 
-# Install PyTorch with CUDA support
-RUN python3.11 -m pip install --user --no-cache-dir \
-    torch==${PYTORCH_VERSION} \
-    torchvision \
-    torchaudio \
-    --index-url https://download.pytorch.org/whl/cu121
-
-# Copy application code
 COPY --chown=hpc:hpc . /home/hpc/hpc-pipeline/
 WORKDIR /home/hpc/hpc-pipeline
 
-# Install package in editable mode
 RUN python3.11 -m pip install --user -e .
 
-# Set Python path
 ENV PATH="/home/hpc/.local/bin:$PATH"
 ENV PYTHONPATH="/home/hpc/hpc-pipeline:$PYTHONPATH"
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python3.11 -c "import hpc_pipeline; print('OK')" || exit 1
 
-# Default command
 CMD ["python3.11", "-m", "hpc_pipeline.orchestrator"]
 
-# Testing stage
-FROM production AS testing
+# ---------------------
+# CI tools stage
+# ---------------------
+FROM production AS ci-tools
 
 USER root
-RUN apt-get update && apt-get install -y \
-    strace \
-    && rm -rf /var/lib/apt/lists/*
-
+RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash && \
+    curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg arch=$(dpkg --print-architecture)] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+      > /etc/apt/sources.list.d/hashicorp.list && \
+    curl -fsSL https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -cs) main" \
+      > /etc/apt/sources.list.d/trivy.list && \
+    apt-get update && apt-get install -y terraform trivy && \
+    rm -rf /var/lib/apt/lists/*
 USER hpc
 
-# Install test dependencies
-COPY requirements-dev.txt .
+# ---------------------
+# Testing stage
+# ---------------------
+FROM ci-tools AS testing
+
+USER root
+RUN apt-get update && apt-get install -y strace && rm -rf /var/lib/apt/lists/*
+USER hpc
+
 RUN python3.11 -m pip install --user -r requirements-dev.txt
 
-# Copy test files
-COPY --chown=hpc:hpc tests/ tests/
-
-# Run tests by default
 CMD ["python3.11", "-m", "pytest", "tests/", "-v"]

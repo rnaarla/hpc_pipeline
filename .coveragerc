@@ -1,6 +1,15 @@
 [run]
 source =
-    monitoring
+    benchmarking
+    chaos
+    data
+    data_pipeline
+    distributed
+    fault_tolerance
+    observability
+    optimization
+    orchestrator
+    profiling
 omit =
     */tests/*
     */test_*.py

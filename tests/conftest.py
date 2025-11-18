@@ -80,7 +80,12 @@ def setup_test_environment():
     """Setup test environment."""
     # Set environment variables for testing
     os.environ["CUDA_VISIBLE_DEVICES"] = "0" if torch.cuda.is_available() else ""
-    os.environ["PYTHONPATH"] = "/Users/rnaarla8/code/hpc-pipeline"
+    repo_root = Path(__file__).resolve().parents[1]
+    current_path = os.environ.get("PYTHONPATH", "")
+    entries = [p for p in current_path.split(os.pathsep) if p]
+    if str(repo_root) not in entries:
+        entries.insert(0, str(repo_root))
+    os.environ["PYTHONPATH"] = os.pathsep.join(entries)
     
     yield
     
