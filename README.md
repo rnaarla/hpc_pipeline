@@ -54,7 +54,7 @@ The HPC pipeline consists of modular components designed for scalability and fau
 git clone https://github.com/rnaarla8/hpc-pipeline.git
 cd hpc-pipeline
 
-# Setup development environment
+# Setup development environment (auto-creates .venv and installs deps)
 make install
 
 # Optional: spawn a shell with the virtualenv pre-activated
