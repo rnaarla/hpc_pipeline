@@ -62,6 +62,7 @@ make devshell
 ```
 
 > ℹ️ All `make` targets bootstrap the `.venv/` directory on demand and reuse it on subsequent runs—no manual `source` or repeated `pip install` cycles required.
+> 🔧 Building optional CUDA/DeepSpeed extensions: ensure `CUDA_HOME` points to your CUDA toolkit. If it’s unset, GPU kernels are skipped automatically and CPU-only workflows continue to work.
 
 ### 2. Run Basic Training
 
